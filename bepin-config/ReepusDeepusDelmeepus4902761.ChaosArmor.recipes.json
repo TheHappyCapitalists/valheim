@@ -1,0 +1,212 @@
+[
+	{
+		"Item": "T1ChaosPlateArmor",
+		"Amount": 1,
+		"Enabled": true,
+		"CraftingStation": "forge",
+		"RepairStation": "forge",
+		"Name": "$item_armor_t1pchaosbody",
+		"Requirements": [
+			{
+				"Item": "HeavymetalBar",
+				"Amount": 15,
+				"AmountPerLevel": 6
+			},
+			{
+				"Item": "BoneFragments",
+				"Amount": 18,
+				"AmountPerLevel": 12
+			}
+		]
+	},
+	{
+		"Item": "T1ChaosPlateHelm",
+		"Amount": 1,
+		"Enabled": true,
+		"CraftingStation": "forge",
+		"RepairStation": "forge",
+		"Name": "$item_helmet_t1pchaosplate",
+		"Requirements": [
+			{
+				"Item": "HeavymetalBar",
+				"Amount": 5,
+				"AmountPerLevel": 4
+			},
+			{
+				"Item": "BoneFragments",
+				"Amount": 12,
+				"AmountPerLevel": 8
+			}
+		]
+	},
+	{
+		"Item": "T1ChaosPlateLegs",
+		"Amount": 1,
+		"Enabled": true,
+		"CraftingStation": "forge",
+		"RepairStation": "forge",
+		"Name": "$item_legs_t1pchaoslegs",
+		"Requirements": [
+			{
+				"Item": "HeavymetalBar",
+				"Amount": 10,
+				"AmountPerLevel": 5
+			},
+			{
+				"Item": "BoneFragments",
+				"Amount": 16,
+				"AmountPerLevel": 10
+			}
+		]
+	},
+	{
+		"Item": "T2ChaosPlateArmor",
+		"Amount": 1,
+		"Enabled": true,
+		"CraftingStation": "forge",
+		"RepairStation": "forge",
+		"Name": "$item_armor_t2pchaosbody",
+		"Requirements": [
+			{
+				"Item": "FrometalBar",
+				"Amount": 15,
+				"AmountPerLevel": 6
+			},
+			{
+				"Item": "FreezeGland",
+				"Amount": 10,
+				"AmountPerLevel": 6
+			},
+			{
+				"Item": "T1ChaosPlateArmor",
+				"Amount": 1,
+				"AmountPerLevel": 0
+			}
+		]
+	},
+	{
+		"Item": "T2ChaosPlateHelm",
+		"Amount": 1,
+		"Enabled": true,
+		"CraftingStation": "forge",
+		"RepairStation": "forge",
+		"Name": "$item_helmet_t2pchaosplate",
+		"Requirements": [
+			{
+				"Item": "FrometalBar",
+				"Amount": 5,
+				"AmountPerLevel": 6
+			},
+			{
+				"Item": "FreezeGland",
+				"Amount": 6,
+				"AmountPerLevel": 4
+			},
+			{
+				"Item": "T1ChaosPlateHelm",
+				"Amount": 1,
+				"AmountPerLevel": 0
+			}
+		]
+	},
+	{
+		"Item": "T2ChaosPlateLegs",
+		"Amount": 1,
+		"Enabled": true,
+		"Name": "$item_legs_t2pchaoslegs",
+		"CraftingStation": "forge",
+		"RepairStation": "forge",
+		"Requirements": [
+			{
+				"Item": "FrometalBar",
+				"Amount": 10,
+				"AmountPerLevel": 6
+			},
+			{
+				"Item": "FreezeGland",
+				"Amount": 8,
+				"AmountPerLevel": 5
+			},
+			{
+				"Item": "T1ChaosPlateLegs",
+				"Amount": 1,
+				"AmountPerLevel": 0
+			}
+		]
+	},
+	{
+		"Item": "ChaosPlateArmorBody",
+		"Amount": 1,
+		"Enabled": true,
+		"Name": "$item_armor_pchaosbodytwo",
+		"CraftingStation": "forge",
+		"RepairStation": "forge",
+		"Requirements": [
+			{
+				"Item": "FlametalBar",
+				"Amount": 15,
+				"AmountPerLevel": 6
+			},
+			{
+				"Item": "SurtlingCore",
+				"Amount": 10,
+				"AmountPerLevel": 6
+			},
+			{
+				"Item": "T2ChaosPlateArmor",
+				"Amount": 1,
+				"AmountPerLevel": 0
+			}
+		]
+	},
+	{
+		"Item": "ChaosPlateHelm",
+		"Amount": 1,
+		"Enabled": true,
+		"Name": "$item_helmet_pchaosplate",
+		"CraftingStation": "forge",
+		"RepairStation": "forge",
+		"Requirements": [
+			{
+				"Item": "FlametalBar",
+				"Amount": 5,
+				"AmountPerLevel": 6
+			},
+			{
+				"Item": "SurtlingCore",
+				"Amount": 6,
+				"AmountPerLevel": 4
+			},
+			{
+				"Item": "T2ChaosPlateHelm",
+				"Amount": 1,
+				"AmountPerLevel": 0
+			}
+		]
+	},
+	{
+		"Item": "ChaosPlateLegs",
+		"Amount": 1,
+		"Enabled": true,
+		"Name": "$item_legs_pchaoslegs",
+		"CraftingStation": "forge",
+		"RepairStation": "forge",
+		"Requirements": [
+			{
+				"Item": "FlametalBar",
+				"Amount": 10,
+				"AmountPerLevel": 6
+			},
+			{
+				"Item": "SurtlingCore",
+				"Amount": 8,
+				"AmountPerLevel": 5
+			},
+			{
+				"Item": "T2ChaosPlateLegs",
+				"Amount": 1,
+				"AmountPerLevel": 0
+			}
+		]
+	}
+]
