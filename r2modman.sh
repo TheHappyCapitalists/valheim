@@ -459,19 +459,19 @@ function install_core {
 				# Copy Cached BepIn to an intermediate dir so we can copy files to it without messing up the cached ver
 				local TMP_BEPIN="$TMP_DIR/tmp/$api_filename"
 				mkdir -p "$TMP_BEPIN" || fatal_error "Failed to make tmp dir"
-				cp -r "$api_dir/BepInExPack/" "$TMP_BEPIN" || fatal_error "Failed to copy temporary BepInEx "
+				cp -r "$api_dir/BepInExPack_Valheim/" "$TMP_BEPIN" || fatal_error "Failed to copy temporary BepInEx "
 
-				cp -r "$CONFIG_DIR" "$TMP_BEPIN/BepInExPack/BepInEx" || fatal_error "Failed to copy Config Files"
-				cp -r "$PLUGINS_DIR" "$TMP_BEPIN/BepInExPack/BepInEx" || fatal_error "Failed to copy Plugins"
+				cp -r "$CONFIG_DIR" "$TMP_BEPIN/BepInExPack_Valheim/BepInEx" || fatal_error "Failed to copy Config Files"
+				cp -r "$PLUGINS_DIR" "$TMP_BEPIN/BepInExPack_Valheim/BepInEx" || fatal_error "Failed to copy Plugins"
 
 				cecho b "Backing Up Old Install..." 1
 				mkdir -p "$TMP_DIR/old"
 				mv "$BEPIN_DIR" "$TMP_DIR/old/BepInEx-$(date +%F_%T)" || fatal_error "Failed to Backup Old BepInEx Folder"
-				mv "$TMP_BEPIN/BepInExPack/"* "$R2_DIR" || fatal_error "Failed to Install New BepInEx Folder"
+				mv "$TMP_BEPIN/BepInExPack_Valheim/"* "$R2_DIR" || fatal_error "Failed to Install New BepInEx Folder"
 				rm -rf "${TMP_BEPIN:?}"
 			else
 				# Just copy the cached version
-				cp -r -f "$api_dir/BepInExPack/"* "$R2_DIR" || fatal_error "Failed to Install New BepInEx Folder"
+				cp -r -f "$api_dir/BepInExPack_Valheim/"* "$R2_DIR" || fatal_error "Failed to Install New BepInEx Folder"
 			fi
 			;;
 
