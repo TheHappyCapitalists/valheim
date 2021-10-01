@@ -5,6 +5,10 @@
 ########## Globals ##########
 #############################
 
+if [ "$DEBUG" == "true" ]; then
+  set -x
+fi
+
 VERSION="1.2.0"
 STEAM_ID="632360"
 
@@ -50,7 +54,7 @@ PROFILE_REGEX="^[A-Za-z0-9][A-Za-z0-9|_|-|.]{8,}$"
 MM_LINK_REGEX="ror2mm://v1/install/thunderstore.io/([A-Za-z0-9_-]+)/([A-Za-z0-9_]+)/([0-9]+\.[0-9]+\.[0-9]+)/$"
 
 # Thunderstore API
-API_URL="https://thunderstore.io/api/v1/package/"
+API_URL="https://valheim.thunderstore.io/api/v1/package/"
 API_FILE="$TMP_DIR/pkgs.json"
 API_TIME="2 hours" # Update Interval
 
@@ -587,7 +591,7 @@ function dl_mod {
 	local api_ver
 
 	# Install a specific version or grab the latest version
-	if [[ "$force_install" == 1 && -n "$mod_ver" ]]; then
+	if [[ "$force_install" == 1 && -n "$mod_ver" ]]; then 
 		api_json=$(jq -r -e --arg MOD "$mod_full_name" --arg VER "$mod_ver" \
 			'.[] | select(.full_name==$MOD) | .versions[] | select(.version_number==$VER)' \
 			"$API_FILE") || fatal_error "Failed to Parse JSON for $mod_full_name $mod_ver"
