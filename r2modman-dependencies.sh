@@ -1,0 +1,1 @@
+sudo apt-get install curl gawk jq p7zip-full sed

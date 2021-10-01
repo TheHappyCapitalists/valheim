@@ -1,0 +1,1220 @@
+#!/usr/bin/env bash
+# Risk of Rain 2 Mod Manager
+
+#############################
+########## Globals ##########
+#############################
+
+VERSION="1.2.0"
+STEAM_ID="632360"
+
+# Dirs
+FLATPAK_DIR=".var/app/com.valvesoftware.Steam/.local/share/Steam"
+
+if [[ -n "$R2MOD_INSTALL_DIR" ]]; then
+	# Custom install location
+	R2_DIR="$R2MOD_INSTALL_DIR"
+elif [[ -d "$HOME/$FLATPAK_DIR/steamapps/common/Risk of Rain 2" ]]; then
+	# Flatpak install
+	R2_DIR="$HOME/$FLATPAK_DIR/steamapps/common/Risk of Rain 2"
+else
+	# Default
+	R2_DIR="${XDG_DATA_HOME:-"$HOME/.local/share"}/Steam/steamapps/common/Risk of Rain 2"
+fi
+
+if [[ -n "$R2MOD_COMPAT_DIR" ]]; then
+	# Custom install location
+	R2_COMPAT="$R2MOD_COMPAT_DIR"
+elif [[ -d "$HOME/$FLATPAK_DIR/steamapps/compatdata/$STEAM_ID" ]]; then
+	# Flatpak
+	R2_COMPAT="$HOME/$FLATPAK_DIR/steamapps/compatdata/$STEAM_ID"
+else
+	# Default
+	R2_COMPAT="${XDG_DATA_HOME:-"$HOME/.local/share"}/Steam/steamapps/compatdata/$STEAM_ID"
+fi
+
+
+BEPIN_DIR="$R2_DIR/BepInEx"
+CONFIG_DIR="$BEPIN_DIR/config"
+PATCHERS_DIR="$BEPIN_DIR/patchers"
+PLUGINS_DIR="$BEPIN_DIR/plugins"
+PLUGINS_DISABLED_DIR="$BEPIN_DIR/plugins_disabled"
+PROFILES_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/r2mod_cli/profiles"
+TMP_DIR="/tmp/r2mod"
+
+# Regex
+MOD_FULL_REGEX="([A-Za-z0-9_-]+)-([A-Za-z0-9_]+)-([0-9]+\.[0-9]+\.[0-9]+)(-HOLD)?$"
+MOD_REGEX="([A-Za-z0-9_-]+)-([A-Za-z0-9_]+)$"
+MOD_VERSION_REGEX="([0-9]+)\.([0-9]+)\.([0-9]+)$"
+PROFILE_REGEX="^[A-Za-z0-9][A-Za-z0-9|_|-|.]{8,}$"
+MM_LINK_REGEX="ror2mm://v1/install/thunderstore.io/([A-Za-z0-9_-]+)/([A-Za-z0-9_]+)/([0-9]+\.[0-9]+\.[0-9]+)/$"
+
+# Thunderstore API
+API_URL="https://thunderstore.io/api/v1/package/"
+API_FILE="$TMP_DIR/pkgs.json"
+API_TIME="2 hours" # Update Interval
+
+# R2ModMan API
+PROFILE_GET_URL="https://r2modman-hastebin.herokuapp.com/raw"
+PROFILE_POST_URL="https://r2modman-hastebin.herokuapp.com/documents"
+
+# Core Mod Strings
+R2MOD_STRING="Foldex-r2mod_cli"
+BEPIN_STRING="bbepis-BepInExPack"
+R2API_STRING="tristanmcpherson-R2API"
+HOOKGEN_STRING="RiskofThunder-HookGenPatcher"
+
+# Mod Dependencies
+declare -A MOD_DEPS
+
+#############################
+########## General ##########
+#############################
+
+function help {
+	echo "R2MOD USAGE
+	r2mod ch(eck): Check for Script Updates
+	r2mod del(ete) ProfileName: Delete Local Profile
+	r2mod dis(able) (Mod-Dependency-String): Disable Mods
+	r2mod ed(it) ConfigName: Edit Mod Configs
+	r2mod en(able) (Mod-Dependency-String): Enable Mods
+	r2mod exp(ort) ProfileName: Export r2modman mod profile
+	r2mod hol(d): Toggle Mod Updates
+	r2mod imp(ort) ProfileCode: Install r2modman mod profile
+	r2mod ins(tall) Mod-Dependency-String: Install New Mod
+	r2mod li(st) (count|all) : List or Count Installed Mods
+	r2mod loa(d) ProfileName: Import Local Profile
+	r2mod ref(resh): Force Refresh Package Cache
+	r2mod run: Launch Risk of Rain
+	r2mod sav(e) ProfileName: Export Local Profile
+	r2mod sea(rch): Search for Mods
+	r2mod set(up): Install a Fresh BepInEx Setup
+	r2mod un(install) Mod-Dependency-String: Uninstall Mod
+	r2mod upd(ate): Update All Exisiting Mods
+	r2mod ver(sion): Print Version"
+	exit
+}
+
+function cecho {
+	# COLORS
+	local blue="\e[34m"
+	local green="\e[32m"
+	local purple="\e[35m"
+	local red="\e[31m"
+	local cend="\e[0m"
+
+	# UNICODE
+	local arrow="→"
+	local check="✓"
+	local cross="✖"
+	local info="✦"
+
+	# INDENT
+	[[ "$3" == 1 ]] && local indent="  "
+
+	case "$1" in
+		b) echo -e "${indent}${blue}${arrow} ${2}${cend}";;
+		g) echo -e "${indent}${green}${check} ${2}${cend}";;
+		p) echo -e "${indent}${purple}${info} ${2}${cend}";;
+		r) echo -e "${indent}${red}${cross} ${2}${cend}";;
+	esac
+}
+
+function error {
+	ERROR=1
+	cecho r "$1"
+}
+
+function fatal_error {
+	cecho r "$1"
+	exit 1
+}
+
+function test_glob {
+	compgen -G "$1" > /dev/null
+}
+
+function sanity_check {
+	ERROR=0
+
+	# Check Script Dependencies
+	declare script_deps=( 7z awk base64 curl date grep jq sed wc )
+	for i in "${script_deps[@]}"; do
+		if ! type -P "$i" > /dev/null; then
+			error "$i is missing from PATH."
+		fi
+	done
+
+	if [[ "$ERROR" == 1 ]]; then
+		fatal_error "Missing Script Dependencies"
+	fi
+
+	# Check File Paths
+	[[ ! -d "$R2_DIR" ]] && cecho r "$R2_DIR" && fatal_error "Risk of Rain 2 Folder Not Found"
+
+	[[ ! -d "$R2_DIR/BepInEx" ]] && cecho r "BepInEx Folder Not Found" && setup_bepin
+	[[ ! -f "$R2_DIR/winhttp.dll" && -z "$SETUP_COMPLETE" ]] && cecho r "winhttp.dll Missing, Broken BepInEx Install" && setup_bepin
+	[[ ! -f "$R2_DIR/doorstop_config.ini" && -z "$SETUP_COMPLETE" ]] && cecho r "doorstop_config.ini Missing, Broken BepInEx Install" && setup_bepin
+
+	cd "$R2_DIR" || fatal_error "Failed to CD to R2 Dir"
+
+	[[ -d "$R2_DIR/BepInEx" && ! -d "$PLUGINS_DISABLED_DIR" ]] && mkdir -p "$PLUGINS_DISABLED_DIR"
+
+	# Double Check After Setup
+	if [[ "$SETUP_COMPLETE" == 1 ]]; then
+		[[ ! -d "$R2_DIR/BepInEx" ]] && fatal_error "BepInEx Folder Not Found, Setup Failed"
+		[[ ! -f "$R2_DIR/winhttp.dll" ]] && fatal_error "winhttp.dll Missing, Setup Failed"
+		[[ ! -f "$R2_DIR/doorstop_config.ini" ]] && fatal_error "doorstop_config.ini Missing, Setup Failed"
+	fi
+
+	# Check Core Mods
+	local core_mods=("$R2API_STRING" "$HOOKGEN_STRING")
+
+	for i in "${core_mods[@]}"; do
+		if ! test_glob "$PLUGINS_DIR/$i-*"; then
+			[[ ! -f "$API_FILE" ]] && get_pkgs
+			cecho p "${i##*-} Missing, Installing"
+			install_mod "$i"
+		fi
+	done
+
+	if [[ ! -d "$PATCHERS_DIR/$HOOKGEN_STRING" ]]; then
+		cecho p "$HOOKGEN_STRING Missing, Installing"
+		install_mod "$HOOKGEN_STRING"
+	fi
+}
+
+function launch_game {
+	local input
+	local steam_cmd="steam"
+
+	if type -P "flatpak" > /dev/null && flatpak list --app | grep -q "com.valvesoftware.Steam"; then
+		cecho b "Using Flatpak Steam"
+		steam_cmd="flatpak run com.valvesoftware.Steam"
+	fi
+
+	cecho b "Risk of Rain 2:"
+	cecho b "(1) Modded (2) Vanilla"
+	read -r input
+
+	case "$input" in
+		 1) toggle_mult_mods 1;;
+		 2) toggle_mult_mods 0;;
+		 *) fatal_error "Invalid Selection";;
+	esac
+
+	cecho b "Running Risk of Rain..."
+	# shellcheck disable=SC2086
+	$steam_cmd -applaunch $STEAM_ID > /dev/null 2>&1 &
+	disown
+}
+
+###################################
+########## Package Cache ##########
+###################################
+
+function check_pkgs {
+	# Make sure the size is right, should be at least 4MB
+	local min_size=4000000
+	# shellcheck disable=SC2155
+	local file_size=$(wc -c < "$1")
+	[[ "$file_size" -lt "$min_size" ]] && return 1
+	return 0
+}
+
+function get_pkgs {
+	# shellcheck disable=SC2155
+	if [[ -f "$API_FILE" ]]; then
+		# check cached file date to see if we need to redownload
+		local file_time=$(date -r "$API_FILE" +%s)
+		local limit=$(date -d "now - $API_TIME" +%s)
+
+		if [[ "$1" != 1 && "$file_time" -gt "$limit" ]] && check_pkgs "$API_FILE"; then
+			cecho g "API cache up to date"
+			return
+		fi
+	fi
+
+	if [[ ! -d "$TMP_DIR" ]]; then
+		mkdir -p "$TMP_DIR"
+	fi
+
+	cecho b "Updating API Cache..."
+	curl -fSsL "$API_URL" -o "$API_FILE.tmp" || fatal_error "Failed to Download Package Cache"
+
+	if check_pkgs "$API_FILE.tmp"; then
+		# Overwrite old cache if Success
+		mv -f "$API_FILE.tmp" "$API_FILE"
+
+		# Cache Package Names for Bash/ZSH Completion
+		jq -r -e '.[] | select(.is_deprecated == false) | .full_name' \
+			"$API_FILE" > "$TMP_DIR/comp_cache" || fatal_error "Failed to Update Completion Cache"
+
+		# Auto Check for Script Updates
+		update_check 1
+	elif [[ -f "$API_FILE" ]] && check_pkgs "$API_FILE"; then
+		# Fall back to old cache if Failed
+		cecho p "Package Cache DL Incomplete, Using Old Cache"
+		rm "$API_FILE.tmp"
+	else
+		fatal_error "Package Cache DL Incomplete"
+	fi
+}
+
+function search_pkgs {
+	local query="$1"
+	local result
+	local name
+	local desc
+
+	[[ -z "$1" ]] && fatal_error "No Search Passed"
+	cecho b "Searching..."
+
+	result=$(jq -r -e --arg SEARCH "$query" \
+		'.[] | select(.is_deprecated == false) | .versions[0] | select(.full_name + .description|test($SEARCH; "i")) | .full_name + "\t" + .description'  \
+		"$API_FILE") || fatal_error "Failed to find $query"
+
+	while IFS=$'\t' read -r name desc; do
+		echo -e "\e[34m$name\n  \e[0m$desc"
+	done <<< "$result"
+}
+
+function update_check {
+	local skip_get_pkg="$1"
+
+	[[ "$skip_get_pkg" != 1 ]] && get_pkgs
+	[[ -n "$UPDATE_CHECK_COMPLETE" ]] && return
+
+	local api_json
+	local api_ver
+
+	api_json=$(jq -r -e --arg MOD "$R2MOD_STRING" '.[] | select(.full_name==$MOD) | .versions[0]' "$API_FILE") || fatal_error "Failed to Parse JSON"
+	api_ver=$(echo "$api_json" | jq -r -e .version_number) || fatal_error "Failed to Parse JSON for version number"
+
+	if version_gt "$api_ver" "$VERSION"; then
+		cecho p "New Version $api_ver Available!"
+		cecho b "https://thunderstore.io/package/Foldex/r2mod_cli/"
+	else
+		cecho g "R2Mod Up to Date"
+	fi
+
+	# Avoids running a second update check if one already ran
+	UPDATE_CHECK_COMPLETE=1
+}
+
+######################################
+########## Mod Dependencies ##########
+######################################
+
+function gen_mod_deps {
+	# Fill MOD_DEPS array with the dependencies from a mod
+	local api_json="$1"
+	local mod_full_name="$2"
+	local api_deps
+	api_deps=$(echo "$api_json" | jq -r -e '.dependencies | @sh') || fatal_error "Failed to Parse $mod_full_name JSON for its dependencies"
+	api_deps=($api_deps) # Recast as array
+
+	for i in "${api_deps[@]}"; do
+		# Remove ' from modstring
+		if [[ "${i//\'/}" =~ $MOD_FULL_REGEX ]]; then
+			local dep_author="${BASH_REMATCH[1]}"
+			local dep_name="${BASH_REMATCH[2]}"
+			local dep_version="${BASH_REMATCH[3]}"
+			local dep_full_name="$dep_author-$dep_name"
+
+			if is_core_mod "$dep_full_name"; then
+				continue
+			fi
+
+			if is_installed_dep "$dep_full_name"; then
+				continue
+			fi
+
+			# Only use the newest version from all dependencies
+			if version_gt "$dep_version" "${MOD_DEPS[$dep_full_name]}"; then
+				MOD_DEPS[$dep_full_name]=$dep_version
+			fi
+
+		fi
+	done
+}
+
+function resolve_mod_deps {
+	[[ ${#MOD_DEPS[@]} -eq 0 ]] && return
+
+	local dep_full_name
+	for i in {1..5}; do # Max Dependency Resolve Depth
+		for dep_full_name in "${!MOD_DEPS[@]}"; do
+			local ver="${MOD_DEPS[$dep_full_name]}"
+
+			if is_installed_dep "$dep_full_name"; then
+				continue
+			fi
+
+			# Enable Missing Dependency if Disabled, otherwise Install
+			if test_glob "$PLUGINS_DISABLED_DIR/$dep_full_name-*"; then
+				cecho p "Dependency Disabled: $dep_full_name"
+				toggle_mod 1 "$dep_full_name-$ver"
+			else
+				cecho p "Dependency Missing: $dep_full_name"
+				install_mod "$dep_full_name-$ver"
+			fi
+		done
+	done
+}
+
+function is_installed_dep {
+	local dep_full_name="$1"
+	local ver="${MOD_DEPS[$dep_full_name]}"
+
+	# Version 0 means the dependency has already been confirmed
+	[[ "$ver" == 0 ]] && return 0
+
+	# Check if dep is installed
+	if test_glob "$PLUGINS_DIR/$dep_full_name-*"; then
+		MOD_DEPS[$dep_full_name]=0
+		return 0
+	fi
+
+	return 1
+}
+
+function is_active_dep {
+	# Checks to see if a mod is listed as a dependency of currently enabled mods
+	local mod="$1"
+	local not_active=1
+	local req_by
+
+	if ! test_glob "$PLUGINS_DIR/*/manifest.json"; then
+		cecho p "No Manifest Files in plugins found. Can't check Dependencies."
+		return 2
+	fi
+
+	for i in "$PLUGINS_DIR"/*/manifest.json; do
+		req_by+=$(jq -r -e --arg MOD "$mod" \
+			'select(.dependencies[] | contains($MOD)) | .name + " "' \
+			"$i") && not_active=0
+	done
+
+	if [[ "$not_active" -eq 0 ]]; then
+	   cecho p "$mod is required by:"
+	   cecho p "$req_by"
+	fi
+
+	return "$not_active"
+}
+
+####################################
+########## Mod Management ##########
+####################################
+
+function version_gt { test "$(printf '%s\n' "$@" | sort -V | head -n 1)" != "$1"; }
+
+function is_core_mod { [[ "$1" =~ ^($BEPIN_STRING|$R2API_STRING|$HOOKGEN_STRING)/?$ ]]; }
+
+function list_installed {
+	local list_all
+	local last_arg=${@: -1}
+	[[ "$last_arg" =~ ^a(ll)?$ ]] && list_all=1
+
+	# Count Plugins
+	if [[ "$1" =~ ^c(ount)?$ ]]; then
+
+		if [[ -n "$list_all" ]]; then
+			cecho p "Enabled Plugins: $(ls -I MMHOOK "$PLUGINS_DIR" | wc -l)"
+			cecho p "Disabled Plugins: $(ls "$PLUGINS_DISABLED_DIR" | wc -l)"
+		else
+			ls -I MMHOOK "$PLUGINS_DIR" | wc -l
+		fi
+	else
+	# List Plugin Names
+		[[ -n "$list_all" ]] && cecho p "Enabled Plugins:"
+		ls -I MMHOOK -1 --color=auto --group-directories-first "$PLUGINS_DIR"
+
+		if [[ -n "$list_all" ]]; then
+			echo
+			cecho p "Disabled Plugins:"
+			ls -1 --color=auto --group-directories-first "$PLUGINS_DISABLED_DIR"
+		fi
+	fi
+}
+
+function install_core {
+	local mod_full_name="$1"
+	local api_filename="$2"
+	local api_dir="$3"
+	local api_ver="$4"
+
+	case "$mod_full_name" in
+
+		"$BEPIN_STRING")
+			if [[ -d "$BEPIN_DIR" ]]; then
+				cecho b "Copying Files into New BepinEx..." 1
+				cd "$R2_DIR" || fatal_error "Failed to CD to R2 Dir"
+
+				# Copy Cached BepIn to an intermediate dir so we can copy files to it without messing up the cached ver
+				local TMP_BEPIN="$TMP_DIR/tmp/$api_filename"
+				mkdir -p "$TMP_BEPIN" || fatal_error "Failed to make tmp dir"
+				cp -r "$api_dir/BepInExPack/" "$TMP_BEPIN" || fatal_error "Failed to copy temporary BepInEx "
+
+				cp -r "$CONFIG_DIR" "$TMP_BEPIN/BepInExPack/BepInEx" || fatal_error "Failed to copy Config Files"
+				cp -r "$PLUGINS_DIR" "$TMP_BEPIN/BepInExPack/BepInEx" || fatal_error "Failed to copy Plugins"
+
+				cecho b "Backing Up Old Install..." 1
+				mkdir -p "$TMP_DIR/old"
+				mv "$BEPIN_DIR" "$TMP_DIR/old/BepInEx-$(date +%F_%T)" || fatal_error "Failed to Backup Old BepInEx Folder"
+				mv "$TMP_BEPIN/BepInExPack/"* "$R2_DIR" || fatal_error "Failed to Install New BepInEx Folder"
+				rm -rf "${TMP_BEPIN:?}"
+			else
+				# Just copy the cached version
+				cp -r -f "$api_dir/BepInExPack/"* "$R2_DIR" || fatal_error "Failed to Install New BepInEx Folder"
+			fi
+			;;
+
+		"$R2MOD_STRING")
+			local input
+
+			# Only install if newer version available
+			if ! version_gt "$api_ver" "$VERSION"; then
+			   cecho g "r2mod_cli: Up to date " 1
+			   return
+			fi
+
+			cecho b "Install r2mod? y/n" 1
+			read -r input
+			[[ ! "$input" =~ ^[Yy](es)?$ ]] && return
+
+			cd "$api_dir" || fatal_error "Failed to CD to API Dir"
+
+			cecho b "Previewing Makefile..." 1
+			sleep 2
+			less Makefile
+
+			cecho b "Running Makefile..." 1
+			sudo make install || fatal_error "Failed to install r2mod"
+
+			return
+			;;
+
+		*)
+			fatal_error "Not a core mod: $mod_full_name"
+			;;
+	esac
+
+	# Make Dummy Plugins Dir so we can track upgrades of core files
+	rmdir "$PLUGINS_DIR/$mod_full_name"* > /dev/null 2>&1
+	mkdir -p "$PLUGINS_DIR/$api_filename"
+}
+
+function fix_bad_extract {
+	# Workaround for improper extractions flattening dir structure
+	# and leaving Windows illegal "\" in filenames
+	# Replace "\" with "/" and remake the original dir structure
+	local api_dir="$1"
+	local illegal_files=()
+	mapfile -t illegal_files < <(compgen -G "$api_dir/*\\\*")
+
+	for i in "${illegal_files[@]}"; do
+		fixed_filename="${i//\\//}"
+		mkdir -p  "${fixed_filename%/*}"
+		mv "$i" "$fixed_filename"
+	done
+}
+
+function install_patcher_files {
+	# Patcher files get installed to the patchers folder instead of plugins
+	local mod_full_name="$1"
+	local api_ver="$2"
+	local patcher_files=()
+	local patcher_path="$PLUGINS_DIR/$mod_full_name-$api_ver"
+
+	if [[ -d "$patcher_path/patchers" ]]; then
+		patcher_path+="/patchers"
+	elif [[ -d "$patcher_path/BepInEx/patchers" ]]; then
+		patcher_path+="/BepInEx/patchers"
+	else
+		return
+	fi
+
+	mapfile -t patcher_files < <(compgen -G "$patcher_path/*")
+
+	[[ "${#patcher_files[@]}" -eq 0 ]] && return
+	cecho b "Moving Patcher Files..." 1
+
+	if [[ "${#patcher_files[@]}" -eq 1  && -d "${patcher_files[0]}" ]]; then
+		patcher_path=${patcher_files[0]}
+	fi
+
+	[[ -d "$PATCHERS_DIR/$mod_full_name" ]] && rm -rf "${PATCHERS_DIR:?}/$mod_full_name"
+	mv -f "$patcher_path" "$PATCHERS_DIR/$mod_full_name"
+}
+
+function backup_old_mod {
+	local mod_dir="$1"
+	if [[ -d "$mod_dir" ]]; then
+		mkdir -p "$TMP_DIR/old"
+
+		# Remove Destination if it already exists
+		if [[ -d "$TMP_DIR/old/$mod_dir" ]]; then
+			rm -rf "${TMP_DIR:?}/old/$mod_dir"
+		fi
+
+		mv "$mod_dir" "$TMP_DIR/old"
+	fi
+}
+
+function dl_mod {
+	# local MOD_AUTHOR="$1"
+	local mod_name="$2"
+	local mod_full_name="$1-$2"
+	local mod_ver="$3"
+	local force_install="$4"
+
+	# Don't try to install the exact same version
+	if [[ "$force_install" == 1 && ( \
+		-d "$PLUGINS_DIR/$mod_full_name-$mod_ver" || \
+		-d "$PLUGINS_DIR/$mod_full_name-$mod_ver-HOLD" || \
+		-d "$PLUGINS_DISABLED_DIR/$mod_full_name-$mod_ver" || \
+		-d "$PLUGINS_DISABLED_DIR/$mod_full_name-$mod_ver-HOLD" \
+		) ]]; then
+
+	   cecho p "$mod_name: Already installed" 1
+	   return
+	fi
+
+	# Need to declare and assign separately to properly check the return code
+	local api_json
+	local api_ver
+
+	# Install a specific version or grab the latest version
+	if [[ "$force_install" == 1 && -n "$mod_ver" ]]; then
+		api_json=$(jq -r -e --arg MOD "$mod_full_name" --arg VER "$mod_ver" \
+			'.[] | select(.full_name==$MOD) | .versions[] | select(.version_number==$VER)' \
+			"$API_FILE") || fatal_error "Failed to Parse JSON for $mod_full_name $mod_ver"
+	else
+		api_json=$(jq -r -e --arg MOD "$mod_full_name" \
+			'.[] | select(.full_name==$MOD) | .versions[0]' \
+			"$API_FILE") || fatal_error "Failed to Parse JSON for $mod_full_name"
+	fi
+
+	api_ver=$(echo "$api_json" | jq -r -e .version_number) || fatal_error "Failed to Parse $mod_full_name JSON for its version number"
+
+	# Only install if there a is a newer version, or if we've forced it
+	if [[ "$force_install" == 1 ]] || version_gt "$api_ver" "$mod_ver" ; then
+
+		local api_dl
+		local api_filename
+		api_dl=$(echo "$api_json" | jq -r -e .download_url) || fatal_error "Failed to Parse $mod_full_name JSON for its download link"
+		api_filename=$(echo "$api_json" | jq -r -e .full_name) || fatal_error "Failed to Parse $mod_full_name JSON for its full name"
+
+		# Dependencies
+		gen_mod_deps "$api_json" "$mod_full_name"
+
+		local api_dir="$TMP_DIR/mods/$api_filename"
+		local api_zip="$api_dir.zip"
+
+		cecho b "$mod_name: Updating to Version $api_ver..." 1
+
+		# DL, Unzip, and Move New Mod
+		if [[ ! -d "$api_dir" ]]; then
+			mkdir -p "$TMP_DIR/mods"
+			curl -fSsL "$api_dl" -o "$api_zip" || fatal_error "Failed to download mod from $API_URL"
+			7z x -y -o"$api_dir" "$api_zip" > /dev/null || fatal_error "Failed to Unzip $api_zip"
+			rm "$api_zip"  || fatal_error "Failed to Delete $api_zip"
+		fi
+
+		# BepInEx & r2mod require Special Installs
+		if [[ "$mod_full_name" =~  ^($BEPIN_STRING|$R2MOD_STRING)$ ]]; then
+			install_core "$mod_full_name" "$api_filename" "$api_dir" "$api_ver"
+			return
+		fi
+
+		fix_bad_extract "$api_dir"
+
+		# Handle Disabled Mods
+		local plugins_dir=$PLUGINS_DIR
+		if test_glob "$PLUGINS_DISABLED_DIR/$mod_full_name-*"; then
+			plugins_dir=$PLUGINS_DISABLED_DIR
+		fi
+
+		# Install Folder
+		cp -r -n "$api_dir" "$plugins_dir" || fatal_error "Failed to copy $api_dir into $plugins_dir"
+
+		# Patcher Files
+		install_patcher_files "$mod_full_name" "$api_ver"
+
+		# Backup Old Dir
+		backup_old_mod "$mod_dir"
+	else
+		cecho g "$mod_name: Up to date" 1
+	fi
+}
+
+function install_mod {
+	local author
+	local name
+	local version
+	local force_install
+
+	if [[ "$1" =~ $MOD_FULL_REGEX ]]; then
+		# Force Install a Specific Version
+		version="${BASH_REMATCH[3]}"
+		force_install=1
+	elif [[ "$1" =~ $MOD_REGEX ]]; then
+		# Install the Latest Version
+		version=0
+	else
+		fatal_error "$1 is not a Valid Mod Name"
+	fi
+
+	author="${BASH_REMATCH[1]}"
+	name="${BASH_REMATCH[2]}"
+
+	cecho b "Installing $name..."
+	dl_mod "$author" "$name" "$version" "$force_install"
+}
+
+function install_mult_mods {
+	[[ -z "$*" ]] && fatal_error "No Mods Passed"
+
+	local mod
+	for mod in "$@"; do
+		install_mod "$mod"
+	done
+
+	[[ ${#MOD_DEPS[@]} -gt 0 ]] && cecho b "Resolving Dependencies..."
+	resolve_mod_deps
+}
+
+function install_mm_link {
+	if [[ "$1" =~ $MM_LINK_REGEX ]]; then
+		local author="${BASH_REMATCH[1]}"
+		local name="${BASH_REMATCH[2]}"
+		local version="${BASH_REMATCH[3]}"
+
+		install_mult_mods "$author-$name-$version"
+	else
+		fatal_error "$1 is not a Valid RoR2MM Link"
+	fi
+}
+
+function uninstall_mod {
+	local author
+	local name
+	local version
+	local mod_dir
+	local input
+
+	if [[ "$1" =~ $MOD_FULL_REGEX ]]; then
+		author="${BASH_REMATCH[1]}"
+		name="${BASH_REMATCH[2]}"
+		mod_dir="$1*"
+	elif [[ "$1" =~ $MOD_REGEX ]]; then
+		author="${BASH_REMATCH[1]}"
+		name="${BASH_REMATCH[2]}"
+		mod_dir="$author-$name-[0-9]*.[0-9]*.[0-9]*"
+	else
+		fatal_error "$1 is not a Valid Mod Name"
+	fi
+
+	if is_core_mod "$author-$name"; then
+		fatal_error "Trying to remove a core mod"
+	fi
+
+	cd "$PLUGINS_DIR" || fatal_error "Cannot CD into $PLUGINS_DIR"
+
+	# Handle Non-Existent or Disabled Plugin
+	if ! test_glob "$mod_dir"; then
+		cd "$PLUGINS_DISABLED_DIR" || fatal_error "Cannot CD into $PLUGINS_DISABLED_DIR"
+		test_glob "$mod_dir" || fatal_error "$name not found"
+	fi
+
+	cecho b "Removing $name..."
+
+	is_active_dep "$author-$name"
+	# cecho cant into globs
+	# shellcheck disable=SC2086
+	echo -e "\e[35m  ✦ Directory to be Deleted:" $mod_dir
+	# Prompt user before we blindly RM on a glob
+	cecho b "Continue? y/n" 1
+	echo -n "  "
+	read -r input
+
+	if [[ "$input" =~ ^[Yy](es)?$ ]]; then
+		# shellcheck disable=SC2086
+		rm -rf $mod_dir
+		# remove patcher dirs as well
+		[[ -d "$BEPIN_DIR/patchers/$author-$name" ]] && rm -rf "${BEPIN_DIR:?}/patchers/$author-$name"
+		cecho g "Uninstalled $name"
+	fi
+}
+
+function uninstall_mult_mods {
+	[[ -z "$*" ]] && fatal_error "No Mods Passed"
+	local mod
+	for mod in "$@"; do
+		uninstall_mod "$mod"
+	done
+}
+
+function update_mods {
+	local upd_disabled="$1"
+
+	local author
+	local name
+	local version
+	local hold
+
+	[[ -z "$upd_disabled" ]] && get_pkgs
+
+	if [[ "$upd_disabled" == 1 ]]; then
+		cecho b "Updating Disabled Mods..."
+		cd "$PLUGINS_DISABLED_DIR" || fatal_error "Cannot CD into $PLUGINS_DISABLED_DIR"
+	else
+		cecho b "Updating Mods..."
+		cd "$PLUGINS_DIR" || fatal_error "Cannot CD into $PLUGINS_DIR"
+	fi
+
+	for mod_dir in */; do
+
+		if [[ $mod_dir =~ ^(R2API|MMHOOK)/?$ ]]; then
+			continue;
+		fi
+
+		if [[ "${mod_dir%%/}" =~ $MOD_FULL_REGEX ]]; then
+			author="${BASH_REMATCH[1]}"
+			name="${BASH_REMATCH[2]}"
+			version="${BASH_REMATCH[3]}"
+			hold="${BASH_REMATCH[4]}"
+		else
+			fatal_error "Failed to Parse Mod Name ${mod_dir%%/}"
+		fi
+
+		if [[ "$hold" == "-HOLD" ]]; then
+			cecho p "$name: On Hold" 1
+			continue
+		fi
+
+		dl_mod "$author" "$name" "$version"
+
+	done
+
+	if [[ -z "$upd_disabled" ]]; then
+	   [[ ${#MOD_DEPS[@]} -gt 0 ]] && cecho b "Resolving Dependencies..."
+	   resolve_mod_deps
+	fi
+
+	if [[ -z "$upd_disabled" ]] && [[ $(ls -A "$PLUGINS_DISABLED_DIR") ]]; then
+		update_mods 1
+	fi
+
+	[[ -z "$upd_disabled" ]] && cecho g "Finished Updating Mods"
+}
+
+function toggle_mult_mods {
+	local enable="$1"
+
+	[[ ! "$enable" =~ [01] ]] && fatal_error "toggle_mult_mods: Invalid first argument"
+
+	case "${@:2}" in
+		"")
+			# All Mods
+			case "$1" in
+				0) sed -i -e 's/enabled=true/enabled=false/' "$R2_DIR/doorstop_config.ini" && cecho b "BepInEx Disabled";;
+				1) sed -i -e 's/enabled=false/enabled=true/' "$R2_DIR/doorstop_config.ini" && cecho b "BepInEx Enabled";;
+				*) fatal_error "toggle_mult_mods: Invalid first argument";;
+			esac
+			;;
+		*)
+			# Individual Mods
+			local mod
+			for mod in "${@:2}"; do
+				toggle_mod "$1" "$mod"
+			done
+			;;
+	esac
+}
+
+function toggle_mod {
+	local enable="$1"
+	local mod="$2"
+
+	local author
+	local name
+	local full_name
+	local version
+	local hold
+	local input
+
+	[[ ! "$mod" =~ $MOD_FULL_REGEX ]] && fatal_error "Invalid Mod Passed"
+
+	author="${BASH_REMATCH[1]}"
+	name="${BASH_REMATCH[2]}"
+	version="${BASH_REMATCH[3]}"
+	hold="${BASH_REMATCH[4]}"
+	full_name="$author-$name"
+
+	if is_core_mod "$full_name"; then
+		fatal_error "Trying to toggle a core mod"
+	fi
+
+	[[ ! -d "$PLUGINS_DISABLED_DIR" ]] && mkdir -p "$PLUGINS_DISABLED_DIR"
+
+	case "$enable" in
+		0)
+			cecho b "Disabling: $mod"
+
+			# Prompt if Mod is required by another mod
+			if is_active_dep "$full_name"; then
+					cecho b "Continue? y/n"
+					read -r input
+
+				[[ ! "$input" =~ ^[Yy](es)?$ ]] && return
+			fi
+
+			# Move patcher files
+			if [[ -d "$PATCHERS_DIR/$full_name" ]]; then
+				local patcher_path="$PLUGINS_DIR/$mod"
+
+				if [[ -d "$patcher_path/patchers" ]]; then
+					patcher_path+="/patchers"
+				elif [[ -d "$patcher_path/BepInEx/patchers" ]]; then
+					patcher_path+="/BepInEx/patchers"
+				else
+					fatal_error "Couldn't find patchers dir in $mod dir"
+				fi
+
+				mv "$PATCHERS_DIR/$full_name" "$patcher_path" || fatal_error "Couldn't move patcher files"
+			fi
+
+			[[ ! -d "$PLUGINS_DIR/$mod" ]] && fatal_error "$mod not found in plugins"
+			mv "$PLUGINS_DIR/$mod" "$PLUGINS_DISABLED_DIR" || fatal_error "Failed to move $mod to $PLUGINS_DISABLED_DIR"
+			;;
+
+		1)
+			cecho b "Enabling: $mod"
+			[[ ! -d "$PLUGINS_DISABLED_DIR/$mod" ]] && fatal_error "$mod not found in plugins_disabled"
+			mv "$PLUGINS_DISABLED_DIR/$mod" "$PLUGINS_DIR" || fatal_error "Failed to move $mod to $PLUGINS_DIR"
+
+			# Move patcher files
+			install_patcher_files "$full_name" "$version"
+
+			# Dependencies
+			if [[ -f "$PLUGINS_DIR/$mod/manifest.json" ]]; then
+				local api_json
+				api_json=$(cat "$PLUGINS_DIR/$mod/manifest.json") || fatal_error "Could not read manifest.json for dependencies"
+				gen_mod_deps "$api_json" "$full_name"
+				resolve_mod_deps
+			else
+				cecho p "Manifest File in $mod not found. Can't check Dependencies."
+			fi
+			;;
+
+		*)
+			fatal_error "toggle_mod: Invalid first argument"
+			;;
+	esac
+}
+
+function toggle_hold {
+	cd "$PLUGINS_DIR" || fatal_error "Cannot CD into $PLUGINS_DIR"
+
+	# Remove -HOLD and Add it back if no dir, for easily reusing old bash history
+	local dir="${1%-HOLD}"
+	[[ ! -d "$dir" ]] && dir="$dir-HOLD"
+	[[ ! -d "$dir" ]] && fatal_error "Invalid Directory"
+
+	if [[ "$dir" =~ $MOD_FULL_REGEX ]]; then
+
+		if [[ "${BASH_REMATCH[4]}" == "-HOLD" ]]; then
+			cecho b "$dir: Removing HOLD"
+			mv "$dir" "${dir%-HOLD}" || fatal_error "$dir Failed to Remove Hold"
+		else
+			cecho b "$dir Putting on Hold"
+			mv "$dir" "$dir-HOLD" || fatal_error "$dir Failed to Put on Hold"
+		fi
+	else
+		fatal_error "Invalid Mod Passed"
+	fi
+}
+
+function edit_configs {
+	[[ -z "$EDITOR" ]] && fatal_error "EDITOR env variable not set"
+	cd "$CONFIG_DIR" || fatal_error "Could not cd to config dir"
+
+	shopt -s nocaseglob # case insensitive matching
+	local files="*$1*"
+	test_glob "$files" || fatal_error "Configs for $1 not found"
+
+	# shellcheck disable=SC2086
+	"$EDITOR" $files
+}
+
+function setup_bepin {
+	local skip_prompt="$1"
+	local input
+
+	if [[ "$skip_prompt" != 1 ]]; then
+		cecho b "Setup New BepInEx Install? y/n"
+		read -r input
+	else
+		input="y"
+	fi
+
+	if [[ "$input" =~ ^[Yy](es)?$ ]]; then
+
+		if [[ -d "$BEPIN_DIR" ]]; then
+			cecho b "Backing up Old Install..."
+			mkdir -p "$TMP_DIR/old"
+			mv "$BEPIN_DIR" "$TMP_DIR/old/BepInEx-$(date +%F_%T)" || fatal_error "Failed to Backup Old Install"
+		fi
+
+		if ! grep -q "winhttp" "$R2_COMPAT/pfx/user.reg"; then
+			cecho b "Overriding winhttp dll..."
+			sed -i '/\[Software\\\\Wine\\\\DllOverrides\].*/a \"winhttp\"=\"native,builtin\"' "$R2_COMPAT/pfx/user.reg"
+		fi
+
+		get_pkgs
+		install_mod "$BEPIN_STRING"
+		cecho g "Installed BepInEx" 1
+		install_mod "$R2API_STRING"
+		cecho g "Installed R2API" 1
+		install_mod "$HOOKGEN_STRING"
+		cecho g "Installed HookGenPatcher" 1
+
+		# setup can run as part of a sanity check, and then as the "setup" command arg
+		# setting this avoids doubling up on setup when you only want to do it once
+		SETUP_COMPLETE=1
+	else
+		cecho p "Setup Cancelled"
+		exit 0
+	fi
+}
+
+##################################
+####### Profile Management #######
+##################################
+
+function profile_import {
+	local shared="$1"
+	local code="$2"
+	local preview="$3"
+
+	local tmp_dir="$TMP_DIR/profile"
+	local profile_path="$tmp_dir/$code"
+	local profile_zip="$profile_path.zip"
+
+	[[ ! -d "$tmp_dir" ]] && mkdir -p "$tmp_dir"
+
+	case "$shared" in
+		# Importing from locally saved profiles
+		0)
+			local name="${code:-default}"
+			[[ ! -d "$PROFILES_DIR" ]] && mkdir -p "$PROFILES_DIR"
+			profile_zip="$PROFILES_DIR/$name.zip"
+			[[ ! -f "$profile_zip" ]] && fatal_error "Profile $name not found"
+			;;
+
+		# Importing the Profile via a r2modman code
+		1)
+			if [[ ! "$code" =~ $PROFILE_REGEX ]]; then
+				fatal_error "$code is not a Valid Profile Code"
+			fi
+
+			if [[ ! -f "$profile_zip" ]]; then
+				cecho b "Downloading Profile $code..."
+				curl -fSsL "$PROFILE_GET_URL/$code" -o "${profile_path}_raw" || fatal_error "Failed to Download Profile from $PROFILE_GET_URL/$code"
+				cecho b "Decoding..."
+				tail -n 1 "${profile_path}_raw" | base64 -d > "$profile_zip" || fatal_error "Failed to Decode Profile $code"
+				rm "${profile_path}_raw"
+			else
+				cecho b "Cached Profile $code Found"
+			fi
+			;;
+
+		*)
+			echo "profile_import: Invalid shared argument"
+			;;
+
+	esac
+
+	cecho b "Extracting..."
+	7z x -y -o"$tmp_dir" "$profile_zip" > /dev/null || fatal_error "Failed to Unzip Profile $code"
+
+	if [[ ! -f "$profile_path" ]]; then
+		# Hacky Awk processing because Bash cant into YAML
+		awk '{
+		if ($2 == "name:")
+			printf "%s-",$3;
+		if ($1 == "major:" || $1 == "minor:")
+			printf "%s.",$2;
+		if ($1 == "patch:")
+			printf "%s ",$2;
+		if ($1 == "enabled:")
+			print $2
+			}' "$tmp_dir/export.r2x" > "$profile_path"
+	fi
+
+	if [[ "$preview" =~ ^[Pp](review)?$ ]]; then
+		cecho b "Previewing..."
+		cat "$profile_path"
+		return
+	fi
+
+	if [[ -z "$SETUP_COMPLETE" ]]; then
+		cecho b "Setting Up BepInEx Install..."
+		setup_bepin 1
+	fi
+
+	cecho b "Installing Profile Mods..."
+	while read -r mod enabled; do
+		if [[ "$enabled" == true ]]; then
+			install_mod "$mod"
+		fi
+	done < "$profile_path"
+
+	if [[ -d "$tmp_dir/config" ]]; then
+		cecho b "Copying Profile Configs..."
+		mv -f "$tmp_dir/config/"* "$CONFIG_DIR"
+	fi
+
+	cecho g "Finished Installing Profile"
+}
+
+function profile_export {
+	local shared="$1"
+	local profile="${2:-default}"
+
+	local tmp_dir="$TMP_DIR/profile"
+	local profile_path="$tmp_dir/$profile"
+	local profile_zip="$profile_path.zip"
+	local export_dir="$tmp_dir/new"
+	local export="$export_dir/export.r2x"
+
+	local author
+	local name
+	local version
+	local major
+	local minor
+	local patch
+
+	local resp
+	local code
+
+	cecho b "Exporting Profile $profile..."
+	cecho b "Exporting Mods..." 1
+	mkdir -p "$export_dir" || fatal_error "Failed to Make $export_dir"
+	echo "profileName: $profile" > "$export"
+	echo "mods:" >> "$export"
+
+	cd "$PLUGINS_DIR" || fatal_error "Cannot CD into $PLUGINS_DIR"
+
+	for mod_dir in */; do
+
+		if [[ $mod_dir =~ ^(R2API|MMHOOK)/?$ ]]; then
+			continue;
+		fi
+
+		if [[ "${mod_dir%%/}" =~ $MOD_FULL_REGEX ]]; then
+			author="${BASH_REMATCH[1]}"
+			name="${BASH_REMATCH[2]}"
+			version="${BASH_REMATCH[3]}"
+			hold="${BASH_REMATCH[4]}"
+		else
+			fatal_error "Failed to Parse Mod Name ${mod_dir%%/}"
+		fi
+
+		if [[ "${mod_dir%%/}" =~ $MOD_VERSION_REGEX ]]; then
+			major="${BASH_REMATCH[1]}"
+			minor="${BASH_REMATCH[2]}"
+			patch="${BASH_REMATCH[3]}"
+		else
+			fatal_error "Failed to Parse Mod Version $version"
+		fi
+
+		cat << EOF >> "$export"
+  - name: $author-$name
+    version:
+      major: $major
+      minor: $minor
+      patch: $patch
+    enabled: true
+EOF
+	done
+
+	cecho b "Copying Configs..." 1
+	cp -r "$CONFIG_DIR" "$export_dir"
+
+	cecho b "Zipping..." 1
+	cd "$export_dir" || fatal_error "Failed to cd to $export_dir"
+	7z a -tzip -y "$profile_zip" ./* > /dev/null || fatal_error "Failed to Zip Up Profile"
+	rm -rf "${export_dir:?}/config"
+
+	case "$shared" in
+		# Saving the Profile Locally
+		0)
+			cecho b "Moving..." 1
+			[[ ! -d "$PROFILES_DIR" ]] && mkdir -p "$PROFILES_DIR"
+			mv -f "$profile_zip" "$PROFILES_DIR/$profile.zip" || fatal_error "Failed to Save Profile Zip"
+			cecho g "Profile Saved"
+			;;
+
+		# Sharing the Profile via a r2modman code
+		1)
+			cecho b "Encoding..." 1
+			# r2modman expects this header on the file
+			echo "#r2modman" > "${profile_path}_base64"
+			base64 -w 0 "$profile_zip" >> "${profile_path}_base64" || fatal_error "Failed to Encode Profile"
+
+			cecho b "Uploading..." 1
+			resp=$(curl -fSs --data-binary "@${profile_path}_base64" "$PROFILE_POST_URL") || fatal_error "Failed to Upload Profile"
+			code=$(echo "$resp" | jq -r -e '.key') || fatal_error "Failed to Parse JSON Response"
+
+			cecho g "Profile Code: $code"
+
+			# rename zip to profile code, so we can cache it
+			mv "$profile_zip" "$tmp_dir/$code.zip" || fatal_error "Failed to Rename Profile Zip to $code"
+			;;
+
+		*)
+			fatal_error "profile_export: Invalid shared argument"
+			;;
+	esac
+}
+
+function profile_delete {
+	local profile="$1"
+
+	[[ ! -f "$PROFILES_DIR/$profile.zip" ]] && fatal_error "Profile $profile not found"
+	rm "${PROFILES_DIR:?}/${profile:?}.zip" || fatal_error "Failed to delete profile"
+}
+
+##################################
+########## Script Start ##########
+##################################
+
+sanity_check
+
+case "$1" in
+	ch*)  update_check;;
+	del*) profile_delete "$2";;
+	dis*) toggle_mult_mods 0 "${@:2}";;
+	ed*)  edit_configs "$2";;
+	en*)  toggle_mult_mods 1 "${@:2}";;
+	exp*) profile_export 1 "$2" ;;
+	hol*) toggle_hold "$2";;
+	imp*) profile_import 1 "$2" "$3";;
+	ins*) get_pkgs && install_mult_mods "${@:2}";;
+	loa*) profile_import 0 "$2" "$3" ;;
+	li* | ls) list_installed "${@:2}";;
+	ref*) get_pkgs 1;;
+	run)  launch_game;;
+	sav*) profile_export 0 "$2" ;;
+	sea*) get_pkgs && search_pkgs "$2";;
+	set*) [[ -z "$SETUP_COMPLETE" ]] && setup_bepin;;
+	un* | rem*) uninstall_mult_mods "${@:2}";;
+	upd*) update_mods;;
+	ver*) echo "$VERSION";;
+	ror2mm*) get_pkgs && install_mm_link "$1";;
+	*) [[ -z "$SETUP_COMPLETE" ]] && help;;
+esac
