@@ -64,9 +64,9 @@ PROFILE_POST_URL="https://r2modman-hastebin.herokuapp.com/documents"
 
 # Core Mod Strings
 R2MOD_STRING="Foldex-r2mod_cli"
-BEPIN_STRING="bbepis-BepInExPack"
-R2API_STRING="tristanmcpherson-R2API"
-HOOKGEN_STRING="RiskofThunder-HookGenPatcher"
+BEPIN_STRING="denikson-BepInExPack_Valheim"
+R2API_STRING="ValheimModding-Jotunn"
+HOOKGEN_STRING="ValheimModding-HookGenPatcher"
 
 # Mod Dependencies
 declare -A MOD_DEPS
