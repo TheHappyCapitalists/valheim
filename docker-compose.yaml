@@ -2,7 +2,10 @@ version: "3"
 
 services:
   valheim:
-    image: lloesche/valheim-server
+    build:
+      dockerfile: ./Dockerfile
+      context: .
+    image: valheim
     cap_add:
       - sys_nice
     volumes:
