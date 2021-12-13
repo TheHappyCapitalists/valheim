@@ -11,6 +11,7 @@ services:
     volumes:
       - ./config:/config
       - ./data:/opt/valheim
+      - ./data/valheimplus/valheim_plus.cfg:/opt/valheim/plus/BepInEx/valheim_plus.cfg
     ports:
       - "2456-2457:2456-2457/udp"
       - "9001:9001/tcp"
